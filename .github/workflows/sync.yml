@@ -1,0 +1,61 @@
+name: Sync skills from topoteretes/cognee
+
+on:
+  schedule:
+    # 03:00 UTC hằng ngày
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-skills
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Sparse-checkout skills from upstream
+        uses: actions/checkout@v4
+        with:
+          repository: topoteretes/cognee
+          ref: main
+          sparse-checkout: .agents/skills
+          path: upstream
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Mirror skills into ./skills
+        run: |
+          set -euo pipefail
+          SRC=".agents/skills"
+          if [ ! -d "upstream/$SRC" ]; then
+            echo "::error::Upstream no longer has $SRC — check topoteretes/cognee layout"
+            exit 1
+          fi
+          rm -rf skills
+          mkdir -p skills
+          cp -R "upstream/$SRC/" "skills/"
+          rm -rf upstream
+          UPSTREAM_SHA=$(git ls-remote https://github.com/topoteretes/cognee.git refs/heads/main | cut -f1)
+          echo "UPSTREAM_SHA=$UPSTREAM_SHA" >> "$GITHUB_ENV"
+
+      - name: Commit & push if changed
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add skills
+          if git diff --cached --quiet; then
+            echo "No changes — upstream skills unchanged."
+            exit 0
+          fi
+          git commit -m "sync: mirror agent skills from topoteretes/cognee@$UPSTREAM_SHA"
+          git push
